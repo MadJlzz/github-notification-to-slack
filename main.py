@@ -2,18 +2,26 @@ import hashlib
 import hmac
 import json
 import os
+from typing import List
 
 import httpx
 import starlette.status
 import uvicorn
 from fastapi import FastAPI
 from loguru import logger
+from pydantic import BaseModel
 from starlette.requests import Request
 from starlette.responses import Response
+
+
+class AppSettings(BaseModel):
+    event_filters: List[str] = ["published"]
+
 
 app = FastAPI(title="Find a good title", description=".", version="0.1.0")
 secret = os.environ["SECRET"]
 webhook_url = os.environ["WEBHOOK_URL"]
+settings = AppSettings()
 
 
 # Global exception handler to catch any unexpected exception
@@ -27,10 +35,19 @@ async def catch_exceptions_middleware(request: Request, call_next):
         return Response("Internal server error", status_code=500)
 
 
+# TODO: this part require to set up authentication.
+# @app.post("/api/command/notification")
+# async def notification_command(request: Request):
+#     data = await request.body()
+#     logger.info(data)
+#
+#     return {"message": "success"}
+
+
 # TODO: Filter the event types to use only the one we are interested in.
 #       Add the description as part of the Slack message.
-@app.post("/notification/listen")
-async def listen_notification(request: Request):
+@app.post("/api/github-event")
+async def handle_github_event(request: Request):
     data = await request.body()
 
     header_signature = request.headers.get("X-Hub-Signature-256")
@@ -41,7 +58,14 @@ async def listen_notification(request: Request):
         return Response("Forbidden", status_code=403)
 
     json_data = json.loads(data)
-    message = f"A new version [{json_data.get('release').get('name')}] of {json_data.get('repository').get('name')} has been released! 🚀 "
+    if (action := json_data.get('action')) not in settings.event_filters:
+        logger.warning(
+            f"event [{action}] has been filtered out because of the configuration [{settings.event_filters}]")
+        return Response(status_code=200)
+
+    message = f"A new version [{json_data.get('release').get('name')}] of {json_data.get('repository').get('name')} " \
+              f"has been released! 🚀 "
+
     slack_req = httpx.post(webhook_url, json={"text": message}, headers={"Content-type": "application/json"})
 
     if slack_req.status_code != starlette.status.HTTP_200_OK:
