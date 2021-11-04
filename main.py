@@ -39,8 +39,6 @@ async def notification_command(command: str = Form(...), text: str = Form(...)):
     return {"message": "success"}
 
 
-# TODO: Filter the event types to use only the one we are interested in.
-#       Add the description as part of the Slack message.
 @app.post("/api/github-event")
 async def handle_github_event(request: Request):
     data = await request.body()
