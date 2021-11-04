@@ -2,26 +2,20 @@ import hashlib
 import hmac
 import json
 import os
-from typing import List
 
 import httpx
 import starlette.status
 import uvicorn
-from fastapi import FastAPI
-from loguru import logger
-from pydantic import BaseModel
+from fastapi import FastAPI, Form
 from starlette.requests import Request
 from starlette.responses import Response
 
-
-class AppSettings(BaseModel):
-    event_filters: List[str] = ["published"]
-
+from github_notification_to_slack import settings
+from github_notification_to_slack.logger import log
 
 app = FastAPI(title="Find a good title", description=".", version="0.1.0")
 secret = os.environ["SECRET"]
 webhook_url = os.environ["WEBHOOK_URL"]
-settings = AppSettings()
 
 
 # Global exception handler to catch any unexpected exception
@@ -31,17 +25,15 @@ async def catch_exceptions_middleware(request: Request, call_next):
     try:
         return await call_next(request)
     except Exception as err:  # pylint: disable=broad-except
-        logger.error("something unexpected happened: {}", err)
+        log.error("something unexpected happened: {}", err)
         return Response("Internal server error", status_code=500)
 
 
 # TODO: this part require to set up authentication.
-# @app.post("/api/command/notification")
-# async def notification_command(request: Request):
-#     data = await request.body()
-#     logger.info(data)
-#
-#     return {"message": "success"}
+@app.post("/api/command/notification")
+async def notification_command(command: str = Form(...), text: str = Form(...)):
+    log.info(f"Received command [{command}] with text [{text}]")
+    return {"message": "success"}
 
 
 # TODO: Filter the event types to use only the one we are interested in.
@@ -54,13 +46,13 @@ async def handle_github_event(request: Request):
     signature = f"sha256={hmac.HMAC(bytes(secret, encoding='utf-8'), data, hashlib.sha256).hexdigest()}"
 
     if header_signature != signature:
-        logger.error("payload signature and header signature are not matching")
+        log.error("payload signature and header signature are not matching")
         return Response("Forbidden", status_code=403)
 
     json_data = json.loads(data)
-    if (action := json_data.get('action')) not in settings.event_filters:
-        logger.warning(
-            f"event [{action}] has been filtered out because of the configuration [{settings.event_filters}]")
+    if (action := json_data.get('action')) not in settings.default.event_filters:
+        log.warning(
+            f"event [{action}] has been filtered out because of the configuration [{settings.default.event_filters}]")
         return Response(status_code=200)
 
     message = f"A new version [{json_data.get('release').get('name')}] of {json_data.get('repository').get('name')} " \
@@ -69,7 +61,7 @@ async def handle_github_event(request: Request):
     slack_req = httpx.post(webhook_url, json={"text": message}, headers={"Content-type": "application/json"})
 
     if slack_req.status_code != starlette.status.HTTP_200_OK:
-        logger.error(f"an error occurred while trying to contact slack. got {slack_req.text}")
+        log.error(f"an error occurred while trying to contact slack. got {slack_req.text}")
         return Response("Bad Request", status_code=400)
 
     return {"message": "success"}
