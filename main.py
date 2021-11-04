@@ -14,8 +14,11 @@ from github_notification_to_slack import settings
 from github_notification_to_slack.logger import log
 
 app = FastAPI(title="Find a good title", description=".", version="0.1.0")
-secret = os.environ["SECRET"]
 webhook_url = os.environ["WEBHOOK_URL"]
+
+# Secrets
+github_signing_secret = os.environ["GITHUB_SIGNING_SECRET"]
+slack_signing_secret = os.environ["SLACK_SIGNING_SECRET"]
 
 
 # Global exception handler to catch any unexpected exception
@@ -43,7 +46,7 @@ async def handle_github_event(request: Request):
     data = await request.body()
 
     header_signature = request.headers.get("X-Hub-Signature-256")
-    signature = f"sha256={hmac.HMAC(bytes(secret, encoding='utf-8'), data, hashlib.sha256).hexdigest()}"
+    signature = f"sha256={hmac.HMAC(bytes(github_signing_secret, encoding='utf-8'), data, hashlib.sha256).hexdigest()}"
 
     if header_signature != signature:
         log.error("payload signature and header signature are not matching")
