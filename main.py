@@ -2,11 +2,12 @@ import hashlib
 import hmac
 import json
 import os
+from datetime import datetime
 
 import httpx
 import starlette.status
 import uvicorn
-from fastapi import FastAPI, Form
+from fastapi import FastAPI
 from starlette.requests import Request
 from starlette.responses import Response
 
@@ -32,10 +33,37 @@ async def catch_exceptions_middleware(request: Request, call_next):
         return Response("Internal server error", status_code=500)
 
 
-# TODO: this part require to set up authentication.
 @app.post("/api/command/notification")
-async def notification_command(command: str = Form(...), text: str = Form(...)):
-    log.info(f"Received command [{command}] with text [{text}]")
+async def notification_command(request: Request):
+    timestamp = request.headers.get("X-Slack-Request-Timestamp")
+    if abs(datetime.now().timestamp() - float(timestamp)) > 60 * 5:
+        # The request timestamp is more than five minutes from local time.
+        # It could be a replay attack, so let's ignore it.
+        return
+
+    request_body = await request.body()
+
+    # log.info(f"Received command [{command}] with text [{text}]")
+    log.info(f"Received body [{str(request_body)}]")
+
+    sig_basestring = f"v0:{timestamp}:{request_body.decode('utf-8')}"
+
+    log.info(f"Signature basestring is [{sig_basestring}]")
+
+    calculated_signature = 'v0=' + hmac.HMAC(
+        bytes(slack_signing_secret, encoding="utf-8"),
+        bytes(sig_basestring, encoding="utf-8"),
+        hashlib.sha256
+    ).hexdigest()
+    slack_signature = request.headers['X-Slack-Signature']
+
+    log.info(f"calculated: {calculated_signature}")
+    log.info(f"slack: {slack_signature}")
+
+    if not hmac.compare_digest(calculated_signature, slack_signature):
+        log.error("payload signature and header signature are not matching")
+        return Response("Forbidden", status_code=403)
+
     return {"message": "success"}
 
 
